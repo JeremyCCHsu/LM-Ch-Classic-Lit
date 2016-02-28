@@ -1,4 +1,5 @@
 # coding=utf-8
+# source code from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/examples/udacity/6_lstm.ipynb
 
 # Problem-shooter for Chinese UTF-8 glyphs:
 # Q: How to show Chinese glyphs on Matplotlib figures?
@@ -11,9 +12,21 @@
 #       prop.set_file('wt064.ttf')
 #    *You can find more Chinese fonts here:
 #     http://cooltext.com/Fonts-Unicode-Chinese
+#     http://fonts.cooltext.com/Downloader.aspx?ID=11100
 
+# More Chinese text can be found:
+# Zizhi-Tongjian: http://tw.zhsxs.com/zhsbook/23085.html
+#   It has 60 chapters, 10k characters each. (estimated 600K in total?)
+# Sanguo-Yanyi
 
+# Tutotial
+# https://www.tensorflow.org/versions/r0.7/tutorials/word2vec/index.html
 
+# Notice theses thread if you want to implement RBM
+#   https://github.com/tensorflow/tensorflow/issues/758
+#   http://stackoverflow.com/questions/34760981/rbm-implemention-with-tensorflow
+
+# ==============================================================================
 # Copyright 2015 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +58,8 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 import zipfile
 
+import cPickle
+
 # Jadd
 # Journey said that this prevents Tensorflow to occupy all the threads.
 # tf.ConfigProto( 
@@ -55,6 +70,9 @@ import zipfile
 #
 # GPU usage:
 #   https://tensorflow.googlesource.com/tensorflow/+show/master/tensorflow/g3doc/how_tos/using_gpu/index.md
+
+
+# Environment variables
 NUM_CORES = 8
 session_conf = tf.ConfigProto( 
   allow_soft_placement=True, 
@@ -63,11 +81,36 @@ session_conf = tf.ConfigProto(
   intra_op_parallelism_threads=NUM_CORES) 
 
 
+# Input/Output file
+filename = 'Zizhitongjan001-294.txt'
+oFile    = 'models/' + filename.replace('txt', 'mdl')
+oFigure  = 'embed.png'
+# oWordEmbed = 'models/wordEmbedding.mdl'
+# oWord2Index= 'models/oWord2Index.mdl'
+# oIndex2Word= 'models/oIndex2Word.mdl'
+# oW1 = 'models/oW1.mdl'
+# oB1 = 'models/oB1.mdl'
+
+# Variables in Step 2
+vocabulary_size = 5000  # ZZTJ185-263 has 4723 words, Whole ZZTJ: 6139 (5000w>3)
+
+
+# Variables in Step 5
+batch_size     = 256
+embedding_size = 128  # Dimension of the embedding vector.
+skip_window    = 1    # How many words to consider left and right.
+num_skips      = 2    # How many times to reuse an input to generate a label.
+# We pick a random validation set to sample nearest neighbors. Here we limit the
+# validation samples to the words that have a low numeric ID, which by
+# construction are also the most frequent.
+num_sampled    = 128   # Number of negative examples to sample.
+valid_size     = 16   # Random set of words to evaluate similarity on.
+valid_window   = 100  # Only pick dev samples in the head of the distribution.
+valid_examples = np.array(random.sample(np.arange(valid_window), valid_size))
+
+
 # Step 1: Download the data.
 url = 'http://mattmahoney.net/dc/'
-
-'http://fonts.cooltext.com/Downloader.aspx?ID=11100'
-
 def maybe_download(filename, expected_bytes):
   """Download a file if not present, and make sure it's the right size."""
   if not os.path.exists(filename):
@@ -82,7 +125,7 @@ def maybe_download(filename, expected_bytes):
   return filename
 
 # filename = maybe_download('text8.zip', 31344016)
-filename = 'DangPoemsUTF8rec1line.txt'
+# filename = 'DangPoemsUTF8rec1line.txt'
 
 
 # Read the data into a string.
@@ -104,10 +147,7 @@ def read_data(filename):
 words = read_data(filename)
 print('Data size', len(words))
 
-
 # Step 2: Build the dictionary and replace rare words with UNK token.
-vocabulary_size = 2500
-
 def build_dataset(words):
   """
   Input: 
@@ -123,6 +163,7 @@ def build_dataset(words):
   count.extend(
     collections.Counter(words).most_common(
       vocabulary_size - 1))
+  # count.extend(collections.Counter(words).most_common())
   # J: Pydoc: "extend list by appending elements from the iterable"
   #    which is a more handy way!
   #    The input of extend() is an iterable.
@@ -238,22 +279,8 @@ for i in range(8):
   print(batch[i], '->', labels[i, 0])
   print(reverse_dictionary[batch[i]], '->', reverse_dictionary[labels[i, 0]])
 
+
 # Step 5: Build and train a skip-gram model.
-
-batch_size = 128
-embedding_size = 128  # Dimension of the embedding vector.
-skip_window = 1       # How many words to consider left and right.
-num_skips = 2         # How many times to reuse an input to generate a label.
-
-# We pick a random validation set to sample nearest neighbors. Here we limit the
-# validation samples to the words that have a low numeric ID, which by
-# construction are also the most frequent.
-valid_size = 16     # Random set of words to evaluate similarity on.
-valid_window = 100  # Only pick dev samples in the head of the distribution.
-valid_examples = np.array(random.sample(np.arange(valid_window), valid_size))
-num_sampled = 64    # Number of negative examples to sample.
-
-
 '''
 The whole package of code cannot be execute properly 
 without this function.
@@ -307,7 +334,7 @@ with graph.as_default():
 
 
 # Step 6: Begin training
-num_steps = 100001
+num_steps = 300001
 with tf.Session(graph=graph, config=session_conf) as session:
   # We must initialize all variables before we use them.
   tf.initialize_all_variables().run()
@@ -345,6 +372,20 @@ with tf.Session(graph=graph, config=session_conf) as session:
           log_str = "%s %s," % (log_str, close_word)
         print(log_str)
   final_embeddings = normalized_embeddings.eval()
+  # Step 6J: Save models
+  finalmodel = dict()
+  finalmodel['W'] = session.run(nce_weights)
+  finalmodel['b'] = session.run(nce_biases)
+  finalmodel['word2index'] = dictionary
+  finalmodel['index2word'] = reverse_dictionary
+  finalmodel['wordcount']  = count
+  finalmodel['embedding']  = final_embeddings
+  with open(oFile, 'wb') as f:
+    cPickle.dump(finalmodel, f)
+  finalmodel = None
+
+
+
 
 
 # Step 7: Visualize the embeddings.
@@ -353,7 +394,7 @@ def plot_with_labels(low_dim_embs, labels, filename='tsne.png'):
   # To show UTF-8 Chinese glyphs, these 2 lines are needed
   from matplotlib.font_manager import FontProperties
   prop = FontProperties()
-  prop.set_file('wt064.ttf')
+  prop.set_file('wt064.ttf')    # [TODO] Specify a font (or at least solve this problem more elegantly)
   plt.figure(figsize=(18, 18))  #in inches
   for i, label in enumerate(labels):
     x, y = low_dim_embs[i,:]
@@ -373,6 +414,7 @@ try:
   import matplotlib.pyplot as plt
   tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000)
   plot_only = 500
+  # plot_only = vocabulary_size
   low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only,:])
   labels = [reverse_dictionary[i] for i in xrange(plot_only)]
   plot_with_labels(low_dim_embs, labels)
