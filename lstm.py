@@ -1,5 +1,7 @@
 # coding=utf-8
 
+# [TODO] Criterion is not correct? should maximize cos
+
 # Handwriting system:
 # http://www.cs.toronto.edu/~graves/handwriting.html
 
@@ -25,10 +27,10 @@ iModel = 'models/Zizhitongjan001-294-skip1-2016-0227.mdl'
 oFile = filename.replace('txt', 'mdl')
 
 
-batch_size = 64
-num_unrollings = 10
+batch_size = 256
+num_unrollings =5
 valid_size = 50
-num_nodes = 256   # hidden nodes
+num_nodes = 128   # hidden nodes
 
 
 # [TODO] Should I use common words for validation? instead of the first piece?
@@ -213,8 +215,8 @@ def logprob(predictions, labels):
 
 def square_err(a, b):
   return np.mean(np.square(a - b))
-# 
-# 
+
+
 def wordvec_to_most_likely_word(x):
   '''
   One-of-K coding
@@ -325,8 +327,22 @@ with graph.as_default():
     #   tf.nn.softmax_cross_entropy_with_logits(
     #     logits, tf.concat(0, train_labels)))
     # J: I need a regressor?
-    logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
-    loss = tf.reduce_mean(tf.square(logits - tf.concat(0, train_labels)))
+    # logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
+    # loss = tf.reduce_mean(tf.square(logits - tf.concat(0, train_labels)))
+    # loss = tf.reduce_mean(
+    #     tf.nn.nce_loss(nce_weights, nce_biases, embed, train_labels,
+    #                    num_sampled, vocabulary_size))
+    loss = 0.0
+    train_prediction = list()
+    for ith in xrange(len(outputs)):
+      # y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
+      y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
+      y_hat_norm = tf.sqrt(tf.reduce_sum(tf.square(y_hat), 1, keep_dims=True))
+      y_hat = y_hat / y_hat_norm
+      train_prediction.append(y_hat)
+      # y_hat = logits[ith]
+      # loss -= tf.matmul(y_hat, train_labels[ith], transpose_b=True)   # a neg sign, because we want this product maximized
+      loss -= tf.reduce_sum(tf.mul(y_hat, train_labels[ith])) / batch_size
   # Optimizer.
   global_step = tf.Variable(0)
   learning_rate = tf.train.exponential_decay(
@@ -338,7 +354,7 @@ with graph.as_default():
     zip(gradients, v), global_step=global_step)
   # Predictions.
   # train_prediction = tf.nn.softmax(logits)
-  train_prediction = logits
+  # train_prediction = logits
   # Sampling and validation eval: batch 1, no unrolling.
   # sample_input = tf.placeholder(tf.float32, shape=[1, vocabulary_size])
   sample_input = tf.placeholder(tf.float32, shape=[1, wordVecSize])
@@ -356,10 +372,14 @@ with graph.as_default():
     sample_prediction = tf.nn.xw_plus_b(sample_output, w, b)
 
 
-# num_steps = 7001
-num_steps = 70001
-summary_frequency = 100
 
+
+
+
+
+
+num_steps = 7001
+summary_frequency = 100
 with tf.Session(graph=graph) as session:
   tf.initialize_all_variables().run()
   print('Initialized')
@@ -369,8 +389,10 @@ with tf.Session(graph=graph) as session:
     feed_dict = dict()
     for i in range(num_unrollings + 1):
       feed_dict[train_data[i]] = batches[i]
-    _, l, predictions, lr = session.run(
-      [optimizer, loss, train_prediction, learning_rate], feed_dict=feed_dict)
+    # _, l, predictions, lr = session.run(
+    #   [optimizer, loss, train_prediction, learning_rate], feed_dict=feed_dict)
+    _, l, lr = session.run(
+      [optimizer, loss, learning_rate], feed_dict=feed_dict)
     mean_loss += l
     if step % summary_frequency == 0:
       if step > 0:
@@ -393,7 +415,7 @@ with tf.Session(graph=graph) as session:
           feedvec = np.reshape(feedvec, [1, wordVecSize])
           # print(feedvec.shape)
           reset_sample_state.run()
-          for _ in range(79):
+          for _ in range(28):
             prediction = sample_prediction.eval({sample_input: feedvec})
             # print(prediction.shape)
             # feed = sample(prediction)
@@ -412,7 +434,8 @@ with tf.Session(graph=graph) as session:
         b = valid_batches.next()
         predictions = sample_prediction.eval({sample_input: b[0]})
         # valid_logprob = valid_logprob + logprob(predictions, b[1])
-        valid_err = valid_err + square_err(predictions, b[1])
+        # valid_err = valid_err + square_err(predictions, b[1])
+        valid_err -= np.dot(predictions, b[1].T)
       # print('Validation set perplexity: %.2f' % float(np.exp(
       print('Validation set err: %f' % (valid_err / float(valid_size)))
 
