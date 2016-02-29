@@ -85,6 +85,7 @@ train_text = text[valid_size:]
 train_size = len(train_text)
 print(train_size, train_text[:64])
 print(valid_size, valid_text[:64])
+print('')
 '''
 99999000 ons anarchists advocate social relations based upon voluntary as
 1000  anarchism originated as a term of abuse first used against earl
@@ -95,8 +96,8 @@ def char2id(char):
 def id2char(dictid):
   return index2word[dictid]
 
-print(char2id(u'考'), char2id(u'北'), char2id(u'，'), char2id(u'ï'))
-print(id2char(1), id2char(26), id2char(0))
+# print(char2id(u'考'), char2id(u'北'), char2id(u'，'), char2id(u'ï'))
+# print(id2char(1), id2char(26), id2char(0))
 
 
 # wordVecSize = 128   # [TODO] from model
@@ -172,28 +173,60 @@ def characters(probabilities):
   characters back into its (mostl likely) character representation."""
   return [id2char(c) for c in np.argmax(probabilities, 1)]
 
-def batches2string(batches):
-  """
-  Convert a sequence of batches back into their (most likely) string
-  representation.
-  J: this method is baffling (however clever).
-  """
-  s = [''] * batches[0].shape[0]
-  for b in batches:
-    s = [''.join(x) for x in zip(s, characters(b))]
-  return s
+# 
+
+def wordvec_to_most_likely_word(x):
+  '''
+  One-of-K coding
+  [TODO] J: This is stupid! I should modify this and the 'characters()'
+  '''
+  sim = np.dot(embeddings, x.T)
+  # i = sim.T.argsort()[0]
+  i = np.argmax(sim.T)
+  word = np.zeros((1, vocabulary_size))
+  word[0, i] = 1.0
+  vec = embeddings[i,:]
+  vec = np.reshape(vec, [1, vec.shape[0]])
+  return word, vec
+
+
+# def batches2string(batches):
+#   """
+#   Convert a sequence of batches back into their (most likely) string
+#   representation.
+#   J: this method is baffling (however clever).
+#   """
+#   s = [''] * batches[0].shape[0]
+#   for b in batches:
+#     s = [''.join(x) for x in zip(s, characters(b))]
+#   return s
+
+def vec2word(x):
+  sim = np.dot(embeddings, x.T)
+  i = np.argmax(sim.T)
+  return index2word[i]
+
+def batches2string(batches): 
+  w = [[vec2word(v) for v in b] for b in batches]
+  g = [''.join(w[i]) for i in range(len(w))]
+  g = [''.join([g[i][j] for i in range(len(w))]) for j in range(batches[0].shape[0])]
+  return g
+  
 
 train_batches = BatchGenerator(train_text, embeddings, batch_size, wordVecSize, num_unrollings)
 valid_batches = BatchGenerator(valid_text, embeddings, 1, wordVecSize, 2)
 
-[sys.stdout.write(v) for v in batches2string(train_batches.next())]
+[print(v) for v in batches2string(train_batches.next())]
 print('')
-[sys.stdout.write(v) for v in batches2string(train_batches.next())]
+[print(v) for v in batches2string(valid_batches.next())]
 print('')
-[sys.stdout.write(v) for v in batches2string(valid_batches.next())]
-print('')
-[sys.stdout.write(v) for v in batches2string(valid_batches.next())]
-print('')
+
+# [sys.stdout.write(v) for v in batches2string(train_batches.next())]
+# print('')
+# [sys.stdout.write(v) for v in batches2string(valid_batches.next())]
+# print('')
+# [sys.stdout.write(v) for v in batches2string(valid_batches.next())]
+# print('')
 
 # print(batches2string(train_batches.next()))
 # print(batches2string(train_batches.next()))
@@ -217,20 +250,13 @@ def square_err(a, b):
   return np.mean(np.square(a - b))
 
 
-def wordvec_to_most_likely_word(x):
-  '''
-  One-of-K coding
-  [TODO] J: This is stupid! I should modify this and the 'characters()'
-  '''
-  sim = np.dot(embeddings, x.T)
-  # i = sim.T.argsort()[0]
-  i = np.argmax(sim.T)
-  word = np.zeros((1, vocabulary_size))
-  word[0, i] = 1.0
-  vec = embeddings[i,:]
-  vec = np.reshape(vec, [1, vec.shape[0]])
-  return word, vec
 
+def knn_words(x, k):
+  sim = np.dot(embeddings, x.T)
+  i = np.argsort(sim.T)[-(k+1):]
+  i = [index2word[j] for j in i]
+  i = ''.join(i)
+  return i
 
 def sample_distribution(distribution):
   """
@@ -327,31 +353,33 @@ with graph.as_default():
     #   tf.nn.softmax_cross_entropy_with_logits(
     #     logits, tf.concat(0, train_labels)))
     # J: I need a regressor?
-    # logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
-    # loss = tf.reduce_mean(tf.square(logits - tf.concat(0, train_labels)))
+    logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
+    loss = tf.reduce_mean(tf.square(logits - tf.concat(0, train_labels)))
     # loss = tf.reduce_mean(
     #     tf.nn.nce_loss(nce_weights, nce_biases, embed, train_labels,
     #                    num_sampled, vocabulary_size))
-    loss = 0.0
-    train_prediction = list()
-    for ith in xrange(len(outputs)):
-      # y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
-      y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
-      y_hat_norm = tf.sqrt(tf.reduce_sum(tf.square(y_hat), 1, keep_dims=True))
-      y_hat = y_hat / y_hat_norm
-      train_prediction.append(y_hat)
-      # y_hat = logits[ith]
-      # loss -= tf.matmul(y_hat, train_labels[ith], transpose_b=True)   # a neg sign, because we want this product maximized
-      loss -= tf.reduce_sum(tf.mul(y_hat, train_labels[ith])) / batch_size
+    # loss = 0.0
+    # train_prediction = list()
+    # for ith in xrange(len(outputs)):
+    #   # y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
+    #   y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
+    #   y_hat_norm = tf.sqrt(tf.reduce_sum(tf.square(y_hat), 1, keep_dims=True))
+    #   y_hat = y_hat / y_hat_norm
+    #   train_prediction.append(y_hat)
+    #   # y_hat = logits[ith]
+    #   # loss -= tf.matmul(y_hat, train_labels[ith], transpose_b=True)   # a neg sign, because we want this product maximized
+    #   loss -= tf.reduce_sum(tf.mul(y_hat, train_labels[ith])) / batch_size
   # Optimizer.
-  global_step = tf.Variable(0)
-  learning_rate = tf.train.exponential_decay(
-    10.0, global_step, 5000, 0.1, staircase=True)
-  optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-  gradients, v = zip(*optimizer.compute_gradients(loss))
-  gradients, _ = tf.clip_by_global_norm(gradients, 1.25)
-  optimizer = optimizer.apply_gradients(
-    zip(gradients, v), global_step=global_step)
+  learning_rate = 0.1
+  optimizer = tf.train.RMSPropOptimizer(learning_rate, 0.999, 0.01).minimize(loss)
+  # global_step = tf.Variable(0)
+  # learning_rate = tf.train.exponential_decay(
+  #   10.0, global_step, 5000, 0.1, staircase=True)
+  # optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+  # gradients, v = zip(*optimizer.compute_gradients(loss))
+  # gradients, _ = tf.clip_by_global_norm(gradients, 1.25)
+  # optimizer = optimizer.apply_gradients(
+  #   zip(gradients, v), global_step=global_step)
   # Predictions.
   # train_prediction = tf.nn.softmax(logits)
   # train_prediction = logits
@@ -391,15 +419,17 @@ with tf.Session(graph=graph) as session:
       feed_dict[train_data[i]] = batches[i]
     # _, l, predictions, lr = session.run(
     #   [optimizer, loss, train_prediction, learning_rate], feed_dict=feed_dict)
-    _, l, lr = session.run(
-      [optimizer, loss, learning_rate], feed_dict=feed_dict)
+    # [BUG] There's a bug in my train_preditions
+    # _, l, lr = session.run(
+    #   [optimizer, loss, learning_rate], feed_dict=feed_dict)
+    l = session.run(loss, feed_dict=feed_dict)
     mean_loss += l
     if step % summary_frequency == 0:
       if step > 0:
         mean_loss = mean_loss / summary_frequency
       # The mean loss is an estimate of the loss over the last few batches.
-      print(
-        'Average loss at step %d: %f learning rate: %f' % (step, mean_loss, lr))
+      print('Average loss at step %d: %f' % (step, mean_loss))
+        # 'Average loss at step %d: %f learning rate: %f' % (step, mean_loss, lr))
       mean_loss = 0
       labels = np.concatenate(list(batches)[1:])
       # print('Minibatch perplexity: %.2f' % float(
