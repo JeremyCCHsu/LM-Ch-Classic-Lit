@@ -1,16 +1,10 @@
 # coding=utf-8
 
-# [TODO] Criterion is not correct? should maximize cos
-
-# Handwriting system:
-# http://www.cs.toronto.edu/~graves/handwriting.html
-
 # These are all the modules we'll be using later. 
 # Make sure you can import them
 # before proceeding further.
 from __future__ import print_function
 import os
-import io
 import numpy as np
 import random
 import string
@@ -19,6 +13,7 @@ import zipfile
 from six.moves import range
 from six.moves.urllib.request import urlretrieve
 
+import io
 import cPickle
 import sys
 import math
@@ -47,72 +42,42 @@ def load_word2vec_model(filename):
     model = None
     return W_w2v, b_w2v, word2index, index2word, wordcount, embeddings
 
-W_w2v, b_w2v, word2index, index2word, wordcount, embeddings = load_word2vec_model(iModel)
-vocabulary_size, wordVecSize = embeddings.shape
-
-
-# url = 'http://mattmahoney.net/dc/'
-# def maybe_download(filename, expected_bytes):
-#   """Download a file if not present, and make sure it's the right size."""
-#   if not os.path.exists(filename):
-#     filename, _ = urlretrieve(url + filename, filename)
-#   statinfo = os.stat(filename)
-#   if statinfo.st_size == expected_bytes:
-#     print('Found and verified %s' % filename)
-#   else:
-#     print(statinfo.st_size)
-#     raise Exception(
-#       'Failed to verify ' + filename + '. Can you get to it with a browser?')
-#   return filename
-
-# filename = maybe_download('text8.zip', 31344016)
-# filename = 'DangPoemsUTF8rec1line.txt'
-
-# def read_data(filename):
-#   f = zipfile.ZipFile(filename)
-#   for name in f.namelist():
-#     return tf.compat.as_str(f.read(name))
-#   f.close()
 def read_data(filename):
   with io.open(filename,'r',encoding='utf8') as f:
       return f.read()
+
+W_w2v, b_w2v, word2index, index2word, wordcount, embeddings = load_word2vec_model(iModel)
+vocabulary_size, wordVecSize = embeddings.shape
 
 text = read_data(filename)
 print('Data size %d' % len(text))
 
 
+valid_size = 1000
 valid_text = text[:valid_size]
 train_text = text[valid_size:]
 train_size = len(train_text)
 print(train_size, train_text[:64])
 print(valid_size, valid_text[:64])
-print('')
-'''
-99999000 ons anarchists advocate social relations based upon voluntary as
-1000  anarchism originated as a term of abuse first used against earl
-'''
+
+
+# vocabulary_size = len(string.ascii_lowercase) + 1 # [a-z] + ' '
+# first_letter = ord(string.ascii_lowercase[0])
 def char2id(char):
   return word2index.get(char, word2index['UNK'])
 
 def id2char(dictid):
   return index2word[dictid]
 
-# print(char2id(u'考'), char2id(u'北'), char2id(u'，'), char2id(u'ï'))
-# print(id2char(1), id2char(26), id2char(0))
 
+batch_size = 64
+num_unrollings = 10
 
-# wordVecSize = 128   # [TODO] from model
 class BatchGenerator(object):
-  '''
-  I have to re-define 'batch', 
-  since I want RNN to predict dense-form of characters
-  '''
-  def __init__(self, text, embeddings, batch_size, wordVecSize, num_unrollings):
+  def __init__(self, text, batch_size, num_unrollings):
     self._text = text
     self._text_size = len(text)
-    self._embeddings = embeddings
     self._batch_size = batch_size
-    self._wordVecSize = wordVecSize
     self._num_unrollings = num_unrollings
     segment = self._text_size // batch_size
     self._cursor = [ offset * segment for offset in range(batch_size)]
@@ -141,12 +106,9 @@ class BatchGenerator(object):
        Later in the 'next' method, we can see how these pieces are combined,
        but it's another weired process.
     """
-    # batch = np.zeros(shape=(self._batch_size, vocabulary_size), dtype=np.float)
-    batch = np.zeros(shape=(self._batch_size, self._wordVecSize), dtype=np.float)
+    batch = np.zeros(shape=(self._batch_size, vocabulary_size), dtype=np.float)
     for b in range(self._batch_size):
-      # batch[b, char2id(self._text[self._cursor[b]])] = 1.0
-      i = char2id(self._text[self._cursor[b]])
-      batch[b] = self._embeddings[i] #tf.nn.embedding_lookup(self._embeddings, i)
+      batch[b, char2id(self._text[self._cursor[b]])] = 1.0
       self._cursor[b] = (self._cursor[b] + 1) % self._text_size
     return batch
   def next(self):
@@ -168,96 +130,35 @@ class BatchGenerator(object):
     return batches
 
 
-# [TODO] Need modification?
 def characters(probabilities):
   """Turn a 1-hot encoding or a probability distribution over the possible
   characters back into its (mostl likely) character representation."""
   return [id2char(c) for c in np.argmax(probabilities, 1)]
 
-# 
+def batches2string(batches):
+  """
+  Convert a sequence of batches back into their (most likely) string
+  representation.
+  J: this method is baffling (however clever).
+  """
+  s = [''] * batches[0].shape[0]
+  for b in batches:
+    s = [''.join(x) for x in zip(s, characters(b))]
+  return s
 
-def wordvec_to_most_likely_word(x):
-  '''
-  One-of-K coding
-  [TODO] J: This is stupid! I should modify this and the 'characters()'
-  '''
-  sim = np.dot(embeddings, x.T)
-  # i = sim.T.argsort()[0]
-  i = np.argmax(sim.T)
-  word = np.zeros((1, vocabulary_size))
-  word[0, i] = 1.0
-  vec = embeddings[i,:]
-  vec = np.reshape(vec, [1, vec.shape[0]])
-  return word, vec
-
-
-# def batches2string(batches):
-#   """
-#   Convert a sequence of batches back into their (most likely) string
-#   representation.
-#   J: this method is baffling (however clever).
-#   """
-#   s = [''] * batches[0].shape[0]
-#   for b in batches:
-#     s = [''.join(x) for x in zip(s, characters(b))]
-#   return s
-
-def vec2word(x):
-  sim = np.dot(embeddings, x.T)
-  i = np.argmax(sim.T)
-  return index2word[i]
-
-def batches2string(batches): 
-  w = [[vec2word(v) for v in b] for b in batches]
-  g = [''.join(w[i]) for i in range(len(w))]
-  g = [''.join([g[i][j] for i in range(len(w))]) for j in range(batches[0].shape[0])]
-  return g
-  
-
-train_batches = BatchGenerator(train_text, embeddings, batch_size, wordVecSize, num_unrollings)
-valid_batches = BatchGenerator(valid_text, embeddings, 1, wordVecSize, 2)
-
-[print(v) for v in batches2string(train_batches.next())]
-print('')
-[print(v) for v in batches2string(valid_batches.next())]
-print('')
-
-# [sys.stdout.write(v) for v in batches2string(train_batches.next())]
-# print('')
-# [sys.stdout.write(v) for v in batches2string(valid_batches.next())]
-# print('')
-# [sys.stdout.write(v) for v in batches2string(valid_batches.next())]
-# print('')
+train_batches = BatchGenerator(train_text, batch_size, num_unrollings)
+valid_batches = BatchGenerator(valid_text, 1, 1)
 
 # print(batches2string(train_batches.next()))
-# print(batches2string(train_batches.next()))
-# print(batches2string(valid_batches.next()))
-# print(batches2string(valid_batches.next()))
+print(batches2string(train_batches.next()))
+print(batches2string(valid_batches.next()))
+print(batches2string(valid_batches.next()))
 
-'''
-['ons anarchi', 'when milita', 'lleria arch', ' abbeys and', 'married urr', 'hel and ric', 'y and litur', 'ay opened f', 'tion from t', 'migration t', 'new york ot', 'he boeing s', 'e listed wi', 'eber has pr', 'o be made t', 'yer who rec', 'ore signifi', 'a fierce cr', ' two six ei', 'aristotle s', 'ity can be ', ' and intrac', 'tion of the', 'dy to pass ', 'f certain d', 'at it will ', 'e convince ', 'ent told hi', 'ampaign and', 'rver side s', 'ious texts ', 'o capitaliz', 'a duplicate', 'gh ann es d', 'ine january', 'ross zero t', 'cal theorie', 'ast instanc', ' dimensiona', 'most holy m', 't s support', 'u is still ', 'e oscillati', 'o eight sub', 'of italy la', 's the tower', 'klahoma pre', 'erprise lin', 'ws becomes ', 'et in a naz', 'the fabian ', 'etchy to re', ' sharman ne', 'ised empero', 'ting in pol', 'd neo latin', 'th risky ri', 'encyclopedi', 'fense the a', 'duating fro', 'treet grid ', 'ations more', 'appeal of d', 'si have mad']
-['ists advoca', 'ary governm', 'hes nationa', 'd monasteri', 'raca prince', 'chard baer ', 'rgical lang', 'for passeng', 'the nationa', 'took place ', 'ther well k', 'seven six s', 'ith a gloss', 'robably bee', 'to recogniz', 'ceived the ', 'icant than ', 'ritic of th', 'ight in sig', 's uncaused ', ' lost as in', 'cellular ic', 'e size of t', ' him a stic', 'drugs confu', ' take to co', ' the priest', 'im to name ', 'd barred at', 'standard fo', ' such as es', 'ze on the g', 'e of the or', 'd hiver one', 'y eight mar', 'the lead ch', 'es classica', 'ce the non ', 'al analysis', 'mormons bel', 't or at lea', ' disagreed ', 'ing system ', 'btypes base', 'anguages th', 'r commissio', 'ess one nin', 'nux suse li', ' the first ', 'zi concentr', ' society ne', 'elatively s', 'etworks sha', 'or hirohito', 'litical ini', 'n most of t', 'iskerdoo ri', 'ic overview', 'air compone', 'om acnm acc', ' centerline', 'e than any ', 'devotional ', 'de such dev']
-[' a']
-['an']
-'''
 
-# [TODO] Need change?
 def logprob(predictions, labels):
   """Log-probability of the true labels in a predicted batch."""
   predictions[predictions < 1e-10] = 1e-10
   return np.sum(np.multiply(labels, -np.log(predictions))) / labels.shape[0]
-
-def square_err(a, b):
-  return np.mean(np.square(a - b))
-
-
-
-def knn_words(x, k):
-  sim = np.dot(embeddings, x.T)
-  i = np.argsort(sim.T)[-(k+1):]
-  i = [index2word[j] for j in i]
-  i = ''.join(i)
-  return i
 
 def sample_distribution(distribution):
   """
@@ -290,36 +191,37 @@ def random_distribution():
   return b/np.sum(b, 1)[:,None]
 
 
+num_nodes = 128
 
 # J: I have a question about Truncated Normal:
 #    why is it that everyone use u=-.1, s=.1?
+
 graph = tf.Graph()
 with graph.as_default(): 
-  # stddev = 1.0 / math.sqrt(wordVecSize)
-  stddev = 0.5
   # Parameters:
   # Input gate: input, previous output, and bias.
-  ix = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, stddev=stddev))
-  im = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, stddev=stddev))
+  ix = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  im = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ib = tf.Variable(tf.zeros([1, num_nodes]))
   # Forget gate: input, previous output, and bias.
-  fx = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, stddev=stddev))
-  fm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, stddev=stddev))
+  fx = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  fm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   fb = tf.Variable(tf.zeros([1, num_nodes]))
   # Memory cell: input, state and bias.                             
-  cx = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, stddev=stddev))
-  cm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, stddev=stddev))
+  cx = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  cm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   cb = tf.Variable(tf.zeros([1, num_nodes]))
   # Output gate: input, previous output, and bias.
-  ox = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, stddev=stddev))
-  om = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, stddev=stddev))
+  ox = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  om = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ob = tf.Variable(tf.zeros([1, num_nodes]))
   # Variables saving state across unrollings.
   saved_output = tf.Variable(tf.zeros([batch_size, num_nodes]), trainable=False)
   saved_state  = tf.Variable(tf.zeros([batch_size, num_nodes]), trainable=False)
   # Classifier weights and biases.
-  w = tf.Variable(tf.truncated_normal([num_nodes, wordVecSize], -0.1, stddev=stddev))
-  b = tf.Variable(tf.zeros([wordVecSize]))
+  w = tf.Variable(tf.truncated_normal([num_nodes, vocabulary_size], -0.1, 0.1))
+  b = tf.Variable(tf.zeros([vocabulary_size]))
+  
   # Definition of the cell computation.
   def lstm_cell(i, o, state):
     """Create a LSTM cell. See e.g.: http://arxiv.org/pdf/1402.1128v1.pdf
@@ -331,14 +233,16 @@ with graph.as_default():
     state  = forget_gate * state + input_gate * tf.tanh(update)
     output_gate = tf.sigmoid(tf.matmul(i, ox) + tf.matmul(o, om) + ob)
     return output_gate * tf.tanh(state), state
+
   # J: Why is it that 'train_data' and 'outputs' stored in a list?
   # Input data.
   train_data = list()
   for _ in range(num_unrollings + 1):
     train_data.append(
-      tf.placeholder(tf.float32, shape=[batch_size, wordVecSize]))
+      tf.placeholder(tf.float32, shape=[batch_size, vocabulary_size]))
   train_inputs = train_data[:num_unrollings]
   train_labels = train_data[1:]  # labels are inputs shifted by one time step.
+
   # Unrolled LSTM loop.
   outputs = list()
   output  = saved_output
@@ -346,51 +250,33 @@ with graph.as_default():
   for i in train_inputs:
     output, state = lstm_cell(i, output, state)
     outputs.append(output)
+
   # State saving across unrollings. ([TODO] J: WTF is this?)
   with tf.control_dependencies([saved_output.assign(output),
                                 saved_state.assign(state)]):
-    # # Classifier.
-    # logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
-    # loss = tf.reduce_mean(
-    #   tf.nn.softmax_cross_entropy_with_logits(
-    #     logits, tf.concat(0, train_labels)))
-    # J: I need a regressor?
-    # logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
-    # loss = tf.reduce_mean(tf.square(logits - tf.concat(0, train_labels)))
-    # loss = tf.reduce_mean(
-    #     tf.nn.nce_loss(nce_weights, nce_biases, embed, train_labels,
-    #                    num_sampled, vocabulary_size))
-    loss = 0.0
-    train_prediction = list()
-    for ith in xrange(len(outputs)):
-      # y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
-      y_hat = tf.nn.xw_plus_b(outputs[ith], w, b)
-      y_hat_norm = tf.sqrt(tf.reduce_sum(tf.square(y_hat), 1, keep_dims=True))
-      y_hat = y_hat / y_hat_norm
-      train_prediction.append(y_hat)
-      # y_hat = logits[ith]
-      # loss -= tf.matmul(y_hat, train_labels[ith], transpose_b=True)   # a neg sign, because we want this product maximized
-      loss -= tf.reduce_mean(tf.reduce_sum(tf.mul(y_hat, train_labels[ith]), 1))
+    # Classifier.
+    logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
+    loss = tf.reduce_mean(
+      tf.nn.softmax_cross_entropy_with_logits(
+        logits, tf.concat(0, train_labels)))
+
   # Optimizer.
-  learning_rate = 0.1
-  optimizer = tf.train.RMSPropOptimizer(learning_rate, 0.999, 0.01).minimize(loss)
-  # global_step = tf.Variable(0)
-  # learning_rate = tf.train.exponential_decay(
-  #   10.0, global_step, 5000, 0.1, staircase=True)
-  # optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-  # gradients, v = zip(*optimizer.compute_gradients(loss))
-  # gradients, _ = tf.clip_by_global_norm(gradients, 1.25)
-  # optimizer = optimizer.apply_gradients(
-  #   zip(gradients, v), global_step=global_step)
+  global_step = tf.Variable(0)
+  learning_rate = tf.train.exponential_decay(
+    10.0, global_step, 5000, 0.1, staircase=True)
+  optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+  gradients, v = zip(*optimizer.compute_gradients(loss))
+  gradients, _ = tf.clip_by_global_norm(gradients, 1.25)
+  optimizer = optimizer.apply_gradients(
+    zip(gradients, v), global_step=global_step)
+
   # Predictions.
-  # train_prediction = tf.nn.softmax(logits)
-  # train_prediction = logits
+  train_prediction = tf.nn.softmax(logits)
+  
   # Sampling and validation eval: batch 1, no unrolling.
-  # sample_input = tf.placeholder(tf.float32, shape=[1, vocabulary_size])
-  sample_input = tf.placeholder(tf.float32, shape=[1, wordVecSize])
+  sample_input = tf.placeholder(tf.float32, shape=[1, vocabulary_size])
   saved_sample_output = tf.Variable(tf.zeros([1, num_nodes]))
   saved_sample_state = tf.Variable(tf.zeros([1, num_nodes]))
-  # [LOOK!] J: learn how to use it.
   reset_sample_state = tf.group(
     saved_sample_output.assign(tf.zeros([1, num_nodes])),
     saved_sample_state.assign(tf.zeros([1, num_nodes])))
@@ -398,16 +284,10 @@ with graph.as_default():
     sample_input, saved_sample_output, saved_sample_state)
   with tf.control_dependencies([saved_sample_output.assign(sample_output),
                                 saved_sample_state.assign(sample_state)]):
-    # sample_prediction = tf.nn.softmax(tf.nn.xw_plus_b(sample_output, w, b))
-    sample_prediction = tf.nn.xw_plus_b(sample_output, w, b)
+    sample_prediction = tf.nn.softmax(tf.nn.xw_plus_b(sample_output, w, b))
 
 
-
-
-
-
-
-
+# 
 num_steps = 70001
 summary_frequency = 100
 with tf.Session(graph=graph) as session:
@@ -419,62 +299,44 @@ with tf.Session(graph=graph) as session:
     feed_dict = dict()
     for i in range(num_unrollings + 1):
       feed_dict[train_data[i]] = batches[i]
-    # _, l, predictions, lr = session.run(
-    #   [optimizer, loss, train_prediction, learning_rate], feed_dict=feed_dict)
-    # [BUG] There's a bug in my train_preditions
-    # _, l, lr = session.run(
-    #   [optimizer, loss, learning_rate], feed_dict=feed_dict)
-    l = session.run(loss, feed_dict=feed_dict)
+    _, l, predictions, lr = session.run(
+      [optimizer, loss, train_prediction, learning_rate], feed_dict=feed_dict)
     mean_loss += l
     if step % summary_frequency == 0:
       if step > 0:
         mean_loss = mean_loss / summary_frequency
       # The mean loss is an estimate of the loss over the last few batches.
-      print('Average loss at step %d: %f' % (step, mean_loss))
-        # 'Average loss at step %d: %f learning rate: %f' % (step, mean_loss, lr))
+      print(
+        'Average loss at step %d: %f learning rate: %f' % (step, mean_loss, lr))
       mean_loss = 0
       labels = np.concatenate(list(batches)[1:])
-      # print('Minibatch perplexity: %.2f' % float(
-      #   np.exp(logprob(predictions, labels))))
+      print('Minibatch perplexity: %.2f' % float(
+        np.exp(logprob(predictions, labels))))
       if step % (summary_frequency * 10) == 0:
         # Generate some samples.
         print('=' * 80)
         for _ in range(5):
-          feed = sample(random_distribution())  # feed is a word (in the form of one-hot coding)
-          sentence = characters(feed)[0]    # a character (unicode string)
-          # Jadd
-          feedvec = embeddings[np.argmax(feed), :]
-          feedvec = np.reshape(feedvec, [1, wordVecSize])
-          # print(feedvec.shape)
+          feed = sample(random_distribution())
+          sentence = characters(feed)[0]
           reset_sample_state.run()
-          for _ in range(28):
-            prediction = sample_prediction.eval({sample_input: feedvec})
-            # print(prediction.shape)
-            # feed = sample(prediction)
-            feed, feedvec = wordvec_to_most_likely_word(prediction)
+          for _ in range(79):
+            prediction = sample_prediction.eval({sample_input: feed})
+            feed = sample(prediction)
             sentence += characters(feed)[0]
-            # feedvec = prediction
-            # [TODO] Should I rectify feedvec (using the real embedding as opposed to predicted value)
           print(sentence)
-          print("")
         print('=' * 80)
       # Measure validation set perplexity.
       reset_sample_state.run()
-      # valid_logprob = 0
-      valid_err = 0.0
+      valid_logprob = 0
       for _ in range(valid_size):
         b = valid_batches.next()
         predictions = sample_prediction.eval({sample_input: b[0]})
-        # valid_logprob = valid_logprob + logprob(predictions, b[1])
-        # valid_err = valid_err + square_err(predictions, b[1])
-        valid_err -= np.dot(predictions, b[1].T)
-      # print('Validation set perplexity: %.2f' % float(np.exp(
-      print('Validation set err: %f' % (valid_err / float(valid_size)))
+        valid_logprob = valid_logprob + logprob(predictions, b[1])
+      print('Validation set perplexity: %.2f' % float(np.exp(
+        valid_logprob / valid_size)))
 
 
-
-
-
+# 
 '''
 Problem 1
 You might have noticed that the definition of the LSTM cell involves 
