@@ -108,9 +108,10 @@ class BatchGenerator(object):
        Later in the 'next' method, we can see how these pieces are combined,
        but it's another weired process.
     """
-    batch = np.zeros(shape=(self._batch_size, vocabulary_size), dtype=np.float)
+    batch = np.zeros(shape=(self._batch_size, vocabulary_size), dtype=np.int32)
     for b in range(self._batch_size):
       batch[b, char2id(self._text[self._cursor[b]])] = 1.0
+      # batch[b, 0] = char2id(self._text[self._cursor[b]])
       self._cursor[b] = (self._cursor[b] + 1) % self._text_size
     return batch
   def next(self):
@@ -151,10 +152,10 @@ def batches2string(batches):
 train_batches = BatchGenerator(train_text, batch_size, num_unrollings)
 valid_batches = BatchGenerator(valid_text, 1, 1)
 
+# # print(batches2string(train_batches.next()))
 # print(batches2string(train_batches.next()))
-print(batches2string(train_batches.next()))
-print(batches2string(valid_batches.next()))
-print(batches2string(valid_batches.next()))
+# print(batches2string(valid_batches.next()))
+# print(batches2string(valid_batches.next()))
 
 
 def logprob(predictions, labels):
@@ -193,28 +194,27 @@ def random_distribution():
   return b/np.sum(b, 1)[:,None]
 
 
+
+
+
 num_nodes = 128
-
-# J: I have a question about Truncated Normal:
-#    why is it that everyone use u=-.1, s=.1?
-
 graph = tf.Graph()
 with graph.as_default(): 
   # Parameters:
   # Input gate: input, previous output, and bias.
-  ix = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  ix = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   im = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ib = tf.Variable(tf.zeros([1, num_nodes]))
   # Forget gate: input, previous output, and bias.
-  fx = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  fx = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   fm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   fb = tf.Variable(tf.zeros([1, num_nodes]))
   # Memory cell: input, state and bias.                             
-  cx = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  cx = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   cm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   cb = tf.Variable(tf.zeros([1, num_nodes]))
   # Output gate: input, previous output, and bias.
-  ox = tf.Variable(tf.truncated_normal([vocabulary_size, num_nodes], -0.1, 0.1))
+  ox = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   om = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ob = tf.Variable(tf.zeros([1, num_nodes]))
   # Variables saving state across unrollings.
@@ -223,28 +223,30 @@ with graph.as_default():
   # Classifier weights and biases.
   w = tf.Variable(tf.truncated_normal([num_nodes, vocabulary_size], -0.1, 0.1))
   b = tf.Variable(tf.zeros([vocabulary_size]))
-  
+  E = tf.constant(embeddings)
   # Definition of the cell computation.
   def lstm_cell(i, o, state):
     """Create a LSTM cell. See e.g.: http://arxiv.org/pdf/1402.1128v1.pdf
     Note that in this formulation, we omit the various connections between the
     previous state and the gates."""
+    # i = tf.nn.embedding_lookup(embeddings, i)
+    i = tf.matmul(i, E)
     input_gate  = tf.sigmoid(tf.matmul(i, ix) + tf.matmul(o, im) + ib)
     forget_gate = tf.sigmoid(tf.matmul(i, fx) + tf.matmul(o, fm) + fb)
     update = tf.matmul(i, cx) + tf.matmul(o, cm) + cb
     state  = forget_gate * state + input_gate * tf.tanh(update)
     output_gate = tf.sigmoid(tf.matmul(i, ox) + tf.matmul(o, om) + ob)
     return output_gate * tf.tanh(state), state
-
   # J: Why is it that 'train_data' and 'outputs' stored in a list?
   # Input data.
   train_data = list()
   for _ in range(num_unrollings + 1):
+    # train_data.append(
+    #   tf.placeholder(tf.int32, shape=[batch_size]))
     train_data.append(
       tf.placeholder(tf.float32, shape=[batch_size, vocabulary_size]))
   train_inputs = train_data[:num_unrollings]
   train_labels = train_data[1:]  # labels are inputs shifted by one time step.
-
   # Unrolled LSTM loop.
   outputs = list()
   output  = saved_output
@@ -252,16 +254,20 @@ with graph.as_default():
   for i in train_inputs:
     output, state = lstm_cell(i, output, state)
     outputs.append(output)
-
   # State saving across unrollings. ([TODO] J: WTF is this?)
   with tf.control_dependencies([saved_output.assign(output),
                                 saved_state.assign(state)]):
     # Classifier.
     logits = tf.nn.xw_plus_b(tf.concat(0, outputs), w, b)
+    # y = list()
+    # for unroll in train_labels:
+    #   y_ = np.zeros((batch_size, vocabulary_size))
+    #   for i in range(batch_size):
+    #     y_[i, unroll[i]] = 1.0
+    #   y.append(y_)
     loss = tf.reduce_mean(
       tf.nn.softmax_cross_entropy_with_logits(
         logits, tf.concat(0, train_labels)))
-
   # Optimizer.
   global_step = tf.Variable(0)
   learning_rate = tf.train.exponential_decay(
@@ -271,12 +277,10 @@ with graph.as_default():
   gradients, _ = tf.clip_by_global_norm(gradients, 1.25)
   optimizer = optimizer.apply_gradients(
     zip(gradients, v), global_step=global_step)
-
   # Predictions.
   train_prediction = tf.nn.softmax(logits)
-  
   # Sampling and validation eval: batch 1, no unrolling.
-  sample_input = tf.placeholder(tf.float32, shape=[1, vocabulary_size])
+  sample_input = tf.placeholder(tf.float32, shape=[1, 1])
   saved_sample_output = tf.Variable(tf.zeros([1, num_nodes]))
   saved_sample_state = tf.Variable(tf.zeros([1, num_nodes]))
   reset_sample_state = tf.group(
