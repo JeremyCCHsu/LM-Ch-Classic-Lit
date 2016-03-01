@@ -1,5 +1,10 @@
 # coding=utf-8
 
+# [TODO] I'll replace 'UNK' with u'u\3012' (full-size post-office sign)
+# [TODO] Current system over-trains 
+#        (in less than 7000 steps if embedding is tunable)!
+#        (inside perplexity: <20,  validation perplexity: ~350)
+
 # This simplest model ahieves perplexity of less than 200 in 6000 steps!
 
 # These are all the modules we'll be using later. 
@@ -19,16 +24,16 @@ import io
 import cPickle
 import sys
 import math
-filename = 'TangPoemsUTF8rec1line.txt'
-# filename = 'Zizhitongjan001-294.txt'
-iModel = 'models/Zizhitongjan001-294-skip1-2016-0227.mdl'
-oFile = filename.replace('txt', 'mdl')
+import datetime
 
+iFile = 'TangPoemsUTF8rec1line.txt'
+# iFile = 'Zizhitongjan001-294.txt'
+iModel = 'models/Zizhitongjan001-294-skip1-2016-0227.mdl'
 
 batch_size = 64
 num_unrollings = 8
 valid_size = 50
-num_nodes = 256   # hidden nodes
+num_nodes = 128   # hidden nodes
 
 
 # [TODO] Should I use common words for validation? instead of the first piece?
@@ -50,8 +55,12 @@ def read_data(filename):
 
 W_w2v, b_w2v, word2index, index2word, wordcount, embeddings = load_word2vec_model(iModel)
 vocabulary_size, wordVecSize = embeddings.shape
+# Replace 'UNK' token
+unk = u'〒'
+word2index[unk] = 0
+index2word[0] = unk
 
-text = read_data(filename)
+text = read_data(iFile)
 print('Data size %d' % len(text))
 
 
@@ -202,19 +211,19 @@ graph = tf.Graph()
 with graph.as_default(): 
   # Parameters:
   # Input gate: input, previous output, and bias.
-  ix = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
+  ix = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, 0.1))
   im = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ib = tf.Variable(tf.zeros([1, num_nodes]))
   # Forget gate: input, previous output, and bias.
-  fx = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
+  fx = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, 0.1))
   fm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   fb = tf.Variable(tf.zeros([1, num_nodes]))
   # Memory cell: input, state and bias.                             
-  cx = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
+  cx = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, 0.1))
   cm = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   cb = tf.Variable(tf.zeros([1, num_nodes]))
   # Output gate: input, previous output, and bias.
-  ox = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
+  ox = tf.Variable(tf.truncated_normal([wordVecSize, num_nodes], -0.1, 0.1))
   om = tf.Variable(tf.truncated_normal([num_nodes, num_nodes], -0.1, 0.1))
   ob = tf.Variable(tf.zeros([1, num_nodes]))
   # Variables saving state across unrollings.
@@ -223,7 +232,8 @@ with graph.as_default():
   # Classifier weights and biases.
   w = tf.Variable(tf.truncated_normal([num_nodes, vocabulary_size], -0.1, 0.1))
   b = tf.Variable(tf.zeros([vocabulary_size]))
-  E = tf.constant(embeddings)
+  # E = tf.constant(embeddings)   # [TODO] Variable/Const: with/without embedding update
+  E = tf.Variable(embeddings)   # [TODO] Variable/Const: with/without embedding update
   # Definition of the cell computation.
   def lstm_cell(i, o, state):
     """Create a LSTM cell. See e.g.: http://arxiv.org/pdf/1402.1128v1.pdf
@@ -280,7 +290,7 @@ with graph.as_default():
   # Predictions.
   train_prediction = tf.nn.softmax(logits)
   # Sampling and validation eval: batch 1, no unrolling.
-  sample_input = tf.placeholder(tf.float32, shape=[1, 1])
+  sample_input = tf.placeholder(tf.float32, shape=[1, vocabulary_size])
   saved_sample_output = tf.Variable(tf.zeros([1, num_nodes]))
   saved_sample_state = tf.Variable(tf.zeros([1, num_nodes]))
   reset_sample_state = tf.group(
@@ -294,7 +304,7 @@ with graph.as_default():
 
 
 # 
-num_steps = 70001
+num_steps = 10001
 summary_frequency = 100
 with tf.Session(graph=graph) as session:
   tf.initialize_all_variables().run()
@@ -335,14 +345,37 @@ with tf.Session(graph=graph) as session:
       reset_sample_state.run()
       valid_logprob = 0
       for _ in range(valid_size):
-        b = valid_batches.next()
-        predictions = sample_prediction.eval({sample_input: b[0]})
-        valid_logprob = valid_logprob + logprob(predictions, b[1])
+        batch = valid_batches.next()
+        predictions = sample_prediction.eval({sample_input:  batch[0]})
+        valid_logprob = valid_logprob + logprob(predictions, batch[1])
       print('Validation set perplexity: %.2f' % float(np.exp(
         valid_logprob / valid_size)))
 
+  model = dict()
+  model['ix'] = session.run(ix)
+  model['im'] = session.run(im)
+  model['ib'] = session.run(ib)
+  model['fx'] = session.run(fx)
+  model['fm'] = session.run(fm)
+  model['fb'] = session.run(fb)
+  model['cx'] = session.run(cx)
+  model['cm'] = session.run(cm)
+  model['cb'] = session.run(cb)
+  model['ox'] = session.run(ox)
+  model['om'] = session.run(om)
+  model['ob'] = session.run(ob)
+  model['saved_output'] = session.run(saved_output)
+  model['saved_state '] = session.run(saved_state)
+  model['w'] = session.run(w)
+  model['b'] = session.run(b)
+  model['E'] = session.run(E)
+  timestamp = datetime.datetime.now().strftime('%Y-%m%d-%H%M')
+  oFile = 'models/' + iFile.replace('.txt', '-%s.mdl' % timestamp)
+  with open(oFile, 'wb') as f:
+    cPickle.dump(model, f)
 
-# 
+
+
 '''
 Problem 1
 You might have noticed that the definition of the LSTM cell involves 
