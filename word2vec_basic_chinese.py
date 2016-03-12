@@ -59,6 +59,7 @@ import tensorflow as tf
 import zipfile
 
 import cPickle
+import sys
 
 # Jadd
 # Journey said that this prevents Tensorflow to occupy all the threads.
@@ -81,8 +82,14 @@ session_conf = tf.ConfigProto(
   intra_op_parallelism_threads=NUM_CORES) 
 
 
+if len(sys.argv) < 2:
+	print 'Please specify input text file.'
+	sys.exit(0)
+
+filename = sys.argv[1]
+
 # Input/Output file
-filename = 'Zizhitongjan001-294.txt'
+# filename = 'almanac.txt'
 oFile    = 'models/' + filename.replace('txt', 'mdl')
 oFigure  = 'embed.png'
 # oWordEmbed = 'models/wordEmbedding.mdl'
@@ -160,9 +167,17 @@ def build_dataset(words):
     reverse_dictionary: (dict) index-to-word mapping.
   """
   count = [['UNK', -1]]
-  count.extend(
-    collections.Counter(words).most_common(
-      vocabulary_size - 1))
+  # count.extend(
+  #   collections.Counter(words).most_common(
+  #     vocabulary_size - 1))
+  word_freq = collections.Counter(words).most_common()
+  n = 1
+  for c in word_freq:
+  	if c[1] < 2:	# [TODO] it should be an argument
+  		break
+  	else:
+  		n += 1
+  count.extend(word_freq[:n])
   # count.extend(collections.Counter(words).most_common())
   # J: Pydoc: "extend list by appending elements from the iterable"
   #    which is a more handy way!
@@ -173,6 +188,9 @@ def build_dataset(words):
   #           which is a list of tuples
   #    Note that Counter is a class, and the most commonly used 
   #    method of Counter is most_common()
+  #    
+  #    collections.Counter yields a dict, 
+  #    while the most_common() method yield list of tuples
   # Word Indexing
   dictionary = dict()
   for word, _ in count:

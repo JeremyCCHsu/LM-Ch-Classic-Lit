@@ -19,15 +19,15 @@ import io
 import cPickle
 import sys
 import math
-filename = 'TangPoemsUTF8rec1line.txt'
+filename = 'TangPoemsUTF8-5.txt'
 # filename = 'Zizhitongjan001-294.txt'
 iModel = 'models/Zizhitongjan001-294-skip1-2016-0227.mdl'
 oFile = filename.replace('txt', 'mdl')
 
 
-batch_size = 64
-num_unrollings = 8
-valid_size = 50
+batch_size = 200
+num_unrollings = 24
+valid_size = 600
 num_nodes = 256   # hidden nodes
 
 
@@ -50,6 +50,10 @@ def read_data(filename):
 
 W_w2v, b_w2v, word2index, index2word, wordcount, embeddings = load_word2vec_model(iModel)
 vocabulary_size, wordVecSize = embeddings.shape
+unk = u'〒'
+word2index[unk] = 0
+index2word[0] = unk
+
 
 text = read_data(filename)
 print('Data size %d' % len(text))
@@ -290,6 +294,7 @@ with graph.as_default():
 
 
 # 
+fid = open('TangPoem0.log', 'w')
 num_steps = 70001
 summary_frequency = 100
 with tf.Session(graph=graph) as session:
@@ -321,11 +326,12 @@ with tf.Session(graph=graph) as session:
           feed = sample(random_distribution())
           sentence = characters(feed)[0]
           reset_sample_state.run()
-          for _ in range(79):
+          for _ in range(100):
             prediction = sample_prediction.eval({sample_input: feed})
             feed = sample(prediction)
             sentence += characters(feed)[0]
           print(sentence)
+          fid.write(sentence.encode('utf8'))
         print('=' * 80)
       # Measure validation set perplexity.
       reset_sample_state.run()
