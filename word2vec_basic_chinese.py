@@ -83,8 +83,8 @@ session_conf = tf.ConfigProto(
 
 
 if len(sys.argv) < 2:
-	print 'Please specify input text file.'
-	sys.exit(0)
+  print('\n[ERROR] Please specify input text file.\n')
+  sys.exit(0)
 
 filename = sys.argv[1]
 
@@ -92,25 +92,20 @@ filename = sys.argv[1]
 # filename = 'almanac.txt'
 oFile    = 'models/' + filename.replace('txt', 'mdl')
 oFigure  = 'embed.png'
-# oWordEmbed = 'models/wordEmbedding.mdl'
-# oWord2Index= 'models/oWord2Index.mdl'
-# oIndex2Word= 'models/oIndex2Word.mdl'
-# oW1 = 'models/oW1.mdl'
-# oB1 = 'models/oB1.mdl'
 
 # Variables in Step 2
-vocabulary_size = 5000  # ZZTJ185-263 has 4723 words, Whole ZZTJ: 6139 (5000w>3)
+# vocabulary_size = 5000  # ZZTJ185-263 has 4723 words, Whole ZZTJ: 6139 (5000w>3)
 
 
 # Variables in Step 5
-batch_size     = 256
+batch_size     = 512
 embedding_size = 128  # Dimension of the embedding vector.
 skip_window    = 1    # How many words to consider left and right.
 num_skips      = 2    # How many times to reuse an input to generate a label.
 # We pick a random validation set to sample nearest neighbors. Here we limit the
 # validation samples to the words that have a low numeric ID, which by
 # construction are also the most frequent.
-num_sampled    = 128   # Number of negative examples to sample.
+num_sampled    = 256   # Number of negative examples to sample.
 valid_size     = 16   # Random set of words to evaluate similarity on.
 valid_window   = 100  # Only pick dev samples in the head of the distribution.
 valid_examples = np.array(random.sample(np.arange(valid_window), valid_size))
@@ -171,13 +166,14 @@ def build_dataset(words):
   #   collections.Counter(words).most_common(
   #     vocabulary_size - 1))
   word_freq = collections.Counter(words).most_common()
-  n = 1
+  vocabulary_size = 1
   for c in word_freq:
-  	if c[1] < 2:	# [TODO] it should be an argument
-  		break
-  	else:
-  		n += 1
-  count.extend(word_freq[:n])
+    if c[1] < 2:  # [TODO] it should be an argument
+      break
+    else:
+      vocabulary_size += 1
+  count.extend(word_freq[:vocabulary_size])
+  vocabulary_size += 1
   # count.extend(collections.Counter(words).most_common())
   # J: Pydoc: "extend list by appending elements from the iterable"
   #    which is a more handy way!
@@ -209,10 +205,10 @@ def build_dataset(words):
     data.append(index)
   count[0][1] = unk_count
   reverse_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
-  return data, count, dictionary, reverse_dictionary
+  return data, count, dictionary, reverse_dictionary, vocabulary_size
 
 
-data, count, dictionary, reverse_dictionary = build_dataset(words)
+data, count, dictionary, reverse_dictionary, vocabulary_size = build_dataset(words)
 del words  # Hint to reduce memory.
 print('Most common words (+UNK)', count[:5])
 print('Most Uncommon words (+UNK)', count[-100:-1])
@@ -352,7 +348,7 @@ with graph.as_default():
 
 
 # Step 6: Begin training
-num_steps = 300001
+num_steps = 500001
 with tf.Session(graph=graph, config=session_conf) as session:
   # We must initialize all variables before we use them.
   tf.initialize_all_variables().run()
@@ -413,7 +409,7 @@ def plot_with_labels(low_dim_embs, labels, filename='tsne.png'):
   from matplotlib.font_manager import FontProperties
   prop = FontProperties()
   prop.set_file('wt064.ttf')    # [TODO] Specify a font (or at least solve this problem more elegantly)
-  plt.figure(figsize=(18, 18))  #in inches
+  plt.figure(figsize=(20, 20))  #in inches
   for i, label in enumerate(labels):
     x, y = low_dim_embs[i,:]
     plt.scatter(x, y)
@@ -431,7 +427,7 @@ try:
   from sklearn.manifold import TSNE
   import matplotlib.pyplot as plt
   tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000)
-  plot_only = 500
+  plot_only = 700
   # plot_only = vocabulary_size
   low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only,:])
   labels = [reverse_dictionary[i] for i in xrange(plot_only)]

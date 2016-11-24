@@ -19,16 +19,24 @@ import io
 import cPickle
 import sys
 import math
-filename = 'TangPoemsUTF8-5.txt'
+
+if len(sys.argv) < 3:
+  print('\n[ERROR] Please specify input model and text name\n')
+else:
+  filename = sys.argv[1]
+  iModel   = sys.argv[2]
+
+# filename = 'SanGuoYanYi001-120.txt'
 # filename = 'Zizhitongjan001-294.txt'
-iModel = 'models/Zizhitongjan001-294-skip1-2016-0227.mdl'
+# iModel = 'models/almanac.mdl'
 oFile = filename.replace('txt', 'mdl')
 
 
 batch_size = 200
-num_unrollings = 24
+num_unrollings = 10
 valid_size = 600
-num_nodes = 256   # hidden nodes
+num_nodes = 128   # hidden nodes [TODO] Need to be the same as input model
+# num_nodes = 128
 
 
 # [TODO] Should I use common words for validation? instead of the first piece?
@@ -196,8 +204,6 @@ def random_distribution():
   b = np.random.uniform(0.0, 1.0, size=[1, vocabulary_size])
   return b/np.sum(b, 1)[:,None]
 
-
-num_nodes = 128
 
 # J: I have a question about Truncated Normal:
 #    why is it that everyone use u=-.1, s=.1?

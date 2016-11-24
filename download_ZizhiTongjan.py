@@ -15,7 +15,7 @@ oFile     = 'Zizhitongjan%03d-%03d.txt' % (chapFirst, chapLast)
 
 with open(oFile, 'w') as f:
 	for i in xrange(chapFirst, chapLast+1):
-		print 'Chapter %03d downloading...' % i
+		print 'Chapter %d downloading...' % i
 		url  = '%s%03d' % (urlbase, i)
 		url  = urllib.urlopen(url)
 		page = url.read()
